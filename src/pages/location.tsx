@@ -220,7 +220,10 @@ const Location = () => {
         setDataUser({ isLogin: false, userData: null, takecareData: null })
     }
 
-    const center = useMemo(() => ({ lat: destination.lat, lng: destination.lng }), [destination]);
+    const center = useMemo(() => {
+        if (caretaker) return { lat: caretaker.lat, lng: caretaker.lng };
+        return { lat: destination.lat, lng: destination.lng };
+    }, [caretaker, destination]);
 
     const handleMarkerClick = (id: number, lat: number, lng: number, address: string) => {
         //     mapRef?.panTo({ lat, lng });
