@@ -30,7 +30,9 @@ const Location = () => {
         height: '100vh'
     };
 
-    const [mapRef, setMapRef] = useState()
+    const mapRef = useRef<google.maps.Map | null>(null);
+    const [userInteracted, setUserInteracted] = useState(false);
+
     const [infoWindowData, setInfoWindowData] = useState({ id: 0, address: '', show: false });
     const [alert, setAlert] = useState({ show: false, message: '' });
     const [isLoading, setLoading] = useState(true);
@@ -46,6 +48,95 @@ const Location = () => {
     const [caretakerRemote, setCaretakerRemote] = useState<{ lat: number; lng: number } | null>(null); // ตำแหน่งผู้ดูแล (ล่าสุดจาก backend)
     const pollingRef = useRef<NodeJS.Timeout | null>(null);
     const caretakerPollingRef = useRef<NodeJS.Timeout | null>(null);
+
+    const onMapLoad = useCallback((map: google.maps.Map) => {
+        mapRef.current = map;
+        map.addListener('dragstart', () => setUserInteracted(true));
+        map.addListener('zoom_changed', () => setUserInteracted(true));
+    }, []);
+
+    const onMapUnmount = useCallback(() => {
+        mapRef.current = null;
+        setUserInteracted(false);
+    }, []);
+
+    const alertModal = useCallback(() => {
+        setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูลของท่านได้ กรุณาลองใหม่อีกครั้ง' })
+        setDataUser({ isLogin: false, userData: null, takecareData: null })
+    }, []);
+
+    // ดึงตำแหน่งผู้ดูแลล่าสุดจาก backend
+    const fetchCaretakerRemote = useCallback(async (userData: any, takecareData: any) => {
+        if (!userData || !takecareData) return;
+        try {
+            const res = await axios.get(`/api/caretakerLocation?users_id=${userData.users_id}&takecare_id=${takecareData.takecare_id}`);
+            if (res.data?.data) {
+                setCaretakerRemote({
+                    lat: Number(res.data.data.locat_latitude),
+                    lng: Number(res.data.data.locat_longitude),
+                });
+            }
+        } catch (e) {
+            // ignore
+        }
+    }, []);
+
+    const onGetLocation = useCallback(async (safezoneData: any, takecareData: any, userData: any, silent = false) => {
+        try {
+            const resLocation = await axios.get(`${process.env.WEB_DOMAIN}/api/location/getLocation?takecare_id=${takecareData.takecare_id}&users_id=${userData.users_id}&safezone_id=${safezoneData.safezone_id}&location_id=${router.query.idlocation}`);
+            if (resLocation.data?.data) {
+                const data = resLocation.data?.data
+                setDestination({
+                    lat: Number(data.locat_latitude),
+                    lng: Number(data.locat_longitude),
+                });
+            } else {
+                setDestination({
+                    lat: Number(safezoneData.safez_latitude),
+                    lng: Number(safezoneData.safez_longitude),
+                });
+            }
+            if (!silent) setLoading(false)
+        } catch (error) {
+            setDataUser({ isLogin: false, userData: null, takecareData: null })
+            setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูล Safezone ของท่านได้ กรุณาลองใหม่อีกครั้ง' })
+            setLoading(false)
+        }
+    }, [router.query.idlocation]);
+
+    // Polling ดึงตำแหน่งล่าสุดทุก 5 วินาที
+    const startPollingLocation = useCallback((safezoneData: any, takecareData: any, userData: any) => {
+        if (pollingRef.current) clearInterval(pollingRef.current);
+        pollingRef.current = setInterval(() => {
+            onGetLocation(safezoneData, takecareData, userData, true);
+        }, 3000);
+        // Polling ตำแหน่งผู้ดูแล (remote) ทุก 3 วินาที
+        if (caretakerPollingRef.current) clearInterval(caretakerPollingRef.current);
+        caretakerPollingRef.current = setInterval(() => {
+            fetchCaretakerRemote(userData, takecareData);
+        }, 3000);
+    }, [fetchCaretakerRemote, onGetLocation]);
+
+    const onGetSafezone = useCallback(async (idSafezone: string, takecareData: any, userData: any) => {
+        try {
+            const resSafezone = await axios.get(`${process.env.WEB_DOMAIN}/api/setting/getSafezone?takecare_id=${takecareData.takecare_id}&users_id=${userData.users_id}&id=${idSafezone}`);
+            if (resSafezone.data?.data) {
+                const data = resSafezone.data?.data
+                setOrigin({
+                    lat: Number(data.safez_latitude),
+                    lng: Number(data.safez_longitude),
+                });
+                setRange1(data.safez_radiuslv1)
+                setRange2(data.safez_radiuslv2)
+                onGetLocation(data, takecareData, userData)
+                startPollingLocation(data, takecareData, userData);
+            }
+        } catch (error) {
+            setDataUser({ isLogin: false, userData: null, takecareData: null })
+            setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูล Safezone ของท่านได้ กรุณาลองใหม่อีกครั้ง' })
+            setLoading(false)
+        }
+    }, [onGetLocation, startPollingLocation]);
 
     // ====== ย้าย onGetUserData มาไว้ตรงนี้ ======
     const onGetUserData = useCallback(async (auToken: string) => {
@@ -69,7 +160,7 @@ const Location = () => {
             setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูลของท่านได้ กรุณาลองใหม่อีกครั้ง' })
             setLoading(false)
         }
-    }, [router.query.idsafezone]);
+    }, [router.query.idsafezone, onGetSafezone, alertModal]);
     // ====== จบย้าย ======
 
     // Polling ตำแหน่งผู้สูงอายุและผู้ดูแลแบบเรียลไทม์
@@ -84,18 +175,6 @@ const Location = () => {
         };
     }, [router.query.auToken, isLoaded, onGetUserData]);
 
-    // Polling ดึงตำแหน่งล่าสุดทุก 5 วินาที
-    const startPollingLocation = (safezoneData: any, takecareData: any, userData: any) => {
-        if (pollingRef.current) clearInterval(pollingRef.current);
-        pollingRef.current = setInterval(() => {
-            onGetLocation(safezoneData, takecareData, userData, true);
-        }, 3000);
-        // Polling ตำแหน่งผู้ดูแล (remote) ทุก 3 วินาที
-        if (caretakerPollingRef.current) clearInterval(caretakerPollingRef.current);
-        caretakerPollingRef.current = setInterval(() => {
-            fetchCaretakerRemote(userData, takecareData);
-        }, 3000);
-    };
     // ส่งตำแหน่งผู้ดูแลไป backend ทุกครั้งที่ caretaker (local) เปลี่ยน
     useEffect(() => {
         if (!caretaker || !dataUser.userData || !dataUser.takecareData) return;
@@ -114,24 +193,9 @@ const Location = () => {
         sendCaretakerLocation();
     }, [caretaker, dataUser.userData, dataUser.takecareData]);
 
-    // ดึงตำแหน่งผู้ดูแลล่าสุดจาก backend
-    const fetchCaretakerRemote = async (userData: any, takecareData: any) => {
-        if (!userData || !takecareData) return;
-        try {
-            const res = await axios.get(`/api/caretakerLocation?users_id=${userData.users_id}&takecare_id=${takecareData.takecare_id}`);
-            if (res.data?.data) {
-                setCaretakerRemote({
-                    lat: Number(res.data.data.locat_latitude),
-                    lng: Number(res.data.data.locat_longitude),
-                });
-            }
-        } catch (e) {
-            // ignore
-        }
-    };
-
     useEffect(() => {
-        if (isLoaded) {
+        // Only calculate route when we have valid coordinates for both origin and destination
+        if (isLoaded && origin.lat !== 0 && destination.lat !== 0) {
             const directionsService = new window.google.maps.DirectionsService();
 
             directionsService.route(
@@ -141,59 +205,18 @@ const Location = () => {
                     travelMode: window.google.maps.TravelMode.DRIVING,
                 },
                 (result, status) => {
-                    if (status === window.google.maps.DirectionsStatus.OK) {
+                    if (status === window.google.maps.DirectionsStatus.OK && result) {
                         setDirections(result);
                     } else {
-                        setDirections(null);
+                        console.error(`Directions request failed due to ${status}`);
+                        setDirections(null); // Clear the route if it fails
                     }
                 }
             );
+        } else {
+            setDirections(null); // Clear directions if coordinates are not valid
         }
     }, [origin, destination, isLoaded]);
-
-    const onGetSafezone = async (idSafezone: string, takecareData: any, userData: any) => {
-        try {
-            const resSafezone = await axios.get(`${process.env.WEB_DOMAIN}/api/setting/getSafezone?takecare_id=${takecareData.takecare_id}&users_id=${userData.users_id}&id=${idSafezone}`);
-            if (resSafezone.data?.data) {
-                const data = resSafezone.data?.data
-                setOrigin({
-                    lat: Number(data.safez_latitude),
-                    lng: Number(data.safez_longitude),
-                });
-                setRange1(data.safez_radiuslv1)
-                setRange2(data.safez_radiuslv2)
-                onGetLocation(data, takecareData, userData)
-                startPollingLocation(data, takecareData, userData);
-            }
-        } catch (error) {
-            setDataUser({ isLogin: false, userData: null, takecareData: null })
-            setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูล Safezone ของท่านได้ กรุณาลองใหม่อีกครั้ง' })
-            setLoading(false)
-        }
-    }
-
-    const onGetLocation = async (safezoneData: any, takecareData: any, userData: any, silent = false) => {
-        try {
-            const resLocation = await axios.get(`${process.env.WEB_DOMAIN}/api/location/getLocation?takecare_id=${takecareData.takecare_id}&users_id=${userData.users_id}&safezone_id=${safezoneData.safezone_id}&location_id=${router.query.idlocation}`);
-            if (resLocation.data?.data) {
-                const data = resLocation.data?.data
-                setDestination({
-                    lat: Number(data.locat_latitude),
-                    lng: Number(data.locat_longitude),
-                });
-            } else {
-                setDestination({
-                    lat: Number(safezoneData.safez_latitude),
-                    lng: Number(safezoneData.safez_longitude),
-                });
-            }
-            if (!silent) setLoading(false)
-        } catch (error) {
-            setDataUser({ isLogin: false, userData: null, takecareData: null })
-            setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูล Safezone ของท่านได้ กรุณาลองใหม่อีกครั้ง' })
-            setLoading(false)
-        }
-    }
     // Geolocation API: ตำแหน่งผู้ดูแล (Caretaker)
     useEffect(() => {
         let geoWatchId: number | null = null;
@@ -215,18 +238,34 @@ const Location = () => {
         };
     }, []);
 
-    const alertModal = () => {
-        setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูลของท่านได้ กรุณาลองใหม่อีกครั้ง' })
-        setDataUser({ isLogin: false, userData: null, takecareData: null })
-    }
+    useEffect(() => {
+        if (!mapRef.current || userInteracted || !isLoaded) return;
+        if (destination.lat === 0 && destination.lng === 0) return;
 
-    const center = useMemo(() => {
-        if (caretaker) return { lat: caretaker.lat, lng: caretaker.lng };
-        return { lat: destination.lat, lng: destination.lng };
-    }, [caretaker, destination]);
+        const bounds = new window.google.maps.LatLngBounds();
+
+        bounds.extend({ lat: destination.lat, lng: destination.lng });
+        bounds.extend({ lat: origin.lat, lng: origin.lng });
+
+        if (caretaker) {
+            bounds.extend({ lat: caretaker.lat, lng: caretaker.lng });
+        }
+        if (caretakerRemote) {
+            bounds.extend({ lat: caretakerRemote.lat, lng: caretakerRemote.lng });
+        }
+
+        if (!bounds.isEmpty()) {
+            if (!bounds.getNorthEast().equals(bounds.getSouthWest())) {
+                mapRef.current.fitBounds(bounds, 100); // padding
+            } else {
+                mapRef.current.setCenter(bounds.getCenter());
+                mapRef.current.setZoom(15);
+            }
+        }
+    }, [isLoaded, destination, origin, caretaker, caretakerRemote, userInteracted]);
 
     const handleMarkerClick = (id: number, lat: number, lng: number, address: string) => {
-        //     mapRef?.panTo({ lat, lng });
+        mapRef.current?.panTo({ lat, lng });
         setInfoWindowData({ id, address, show: true });
     };
     const polygonOptions = {
@@ -257,8 +296,8 @@ const Location = () => {
                         <GoogleMap
                             clickableIcons={false}
                             mapContainerStyle={containerStyle}
-                            center={center}
-                            zoom={14}
+                            onLoad={onMapLoad}
+                            onUnmount={onMapUnmount}
                             options={{
                                 mapTypeControl: true,
                                 streetViewControl: false,
@@ -353,6 +392,9 @@ const Location = () => {
                             {dataUser.takecareData?.takecare_tel1 && (
                                 <a className={`btn btn-primary ${styles.button}`} href={`tel:${dataUser.takecareData?.takecare_tel1}`}> โทรหาผู้สูงอายุ <i className="fas fa-phone"></i> </a>
                             )}
+                            <button className={`btn btn-info ${styles.button}`} onClick={() => setUserInteracted(false)}>
+                                จัดกลาง <i className="fas fa-crosshairs"></i>
+                            </button>
                         </div>
                     </>
                 )

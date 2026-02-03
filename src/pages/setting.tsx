@@ -1,5 +1,5 @@
 'use client'
-import React, { useState, useMemo, useEffect } from 'react'
+import React, { useState, useMemo, useEffect, useCallback } from 'react'
 import { useRouter } from 'next/router'
 import axios from 'axios'
 
@@ -28,13 +28,13 @@ interface DataUserState {
 }
 
 interface SafezoneStage {
-    takecare_id     : number
-    users_id        : number
-    safezone_id    ?: number
-    safez_latitude  : string
-    safez_longitude : string
-    safez_radiuslv1 : number
-    safez_radiuslv2 : number
+    takecare_id: number
+    users_id: number
+    safezone_id?: number
+    safez_latitude: string
+    safez_longitude: string
+    safez_radiuslv1: number
+    safez_radiuslv2: number
 }
 const Setting = () => {
     const router = useRouter();
@@ -59,75 +59,84 @@ const Setting = () => {
     const [dataUser, setDataUser] = useState<DataUserState>({ isLogin: false, userData: null, takecareData: null })
     const [idSafezoneStage, setIdSafezoneStage] = useState(0)
 
-    useEffect(() => {
-        const auToken = router.query.auToken
-        // const idSafezone = router.query.idsafezone
-     
-        if (auToken) {
-            onGetUserData(auToken as string)
-        }
-
-        if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition((position) => {
-                setLocation({
-                    latitude: position.coords.latitude,
-                    longitude: position.coords.longitude,
-                });
-            });
-        }
-    }, [router.query.auToken]);
-
-    const onGetSafezone = async (idSafezone: string, takecareData : any, userData: any) => {
+    const onGetSafezone = useCallback(async (idSafezone: string, takecareData: any, userData: any) => {
         try {
             const resSafezone = await axios.get(`${process.env.WEB_DOMAIN}/api/setting/getSafezone?takecare_id=${takecareData.takecare_id}&users_id=${userData.users_id}&id=${idSafezone}`);
-            if(resSafezone.data?.data){
+            if (resSafezone.data?.data) {
                 const data = resSafezone.data?.data
                 setLocation({
                     latitude: Number(data.safez_latitude),
                     longitude: Number(data.safez_longitude),
                 });
-                setRange1(data.safez_radiuslv1)
-                setRange2(data.safez_radiuslv2)
-                setIdSafezoneStage(Number(idSafezone))
+                setRange1(data.safez_radiuslv1);
+                setRange2(data.safez_radiuslv2);
+                setIdSafezoneStage(Number(idSafezone));
             }
         } catch (error) {
-            console.log("🚀 ~ file: registration.tsx:66 ~ onGetUserData ~ error:", error)
-            setDataUser({ isLogin: false, userData: null, takecareData: null })
-            setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูลของท่านได้ กรุณาลองใหม่อีกครั้ง' })
+            console.log("🚀 ~ onGetSafezone ~ error:", error)
+            setAlert({ show: true, message: 'ไม่สามารถดึงข้อมูลเขตปลอดภัยได้' });
         }
-    }
+    }, []);
 
-    const onGetUserData = async (auToken: string) => {
-        try {
-            const responseUser = await axios.get(`${process.env.WEB_DOMAIN}/api/user/getUser/${auToken}`);
-            if(responseUser.data?.data){
-                const encodedUsersId = encrypt(responseUser.data?.data.users_id.toString());
-                
-                const responseTakecareperson = await axios.get(`${process.env.WEB_DOMAIN}/api/user/getUserTakecareperson/${encodedUsersId}`);
-                const data = responseTakecareperson.data?.data
-                if(data){
-                    setDataUser({ isLogin: false, userData: responseUser.data?.data, takecareData: data })
-                    const idSafezone = router.query.idsafezone
-                    if(Number(idSafezone) > 0){
-                        onGetSafezone(idSafezone as string, data, responseUser.data?.data)
-                    }
-                }else{
-                    alertModal()
-                }
-            }else{
-                alertModal()
-            }
-        } catch (error) {
-            console.log("🚀 ~ file: registration.tsx:66 ~ onGetUserData ~ error:", error)
-            setDataUser({ isLogin: false, userData: null, takecareData: null })
-            setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูลของท่านได้ กรุณาลองใหม่อีกครั้ง' })
-        }
-    }
-
-    const alertModal = () => {
+    const alertModal = useCallback(() => {
         setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูลของท่านได้ กรุณาลองใหม่อีกครั้ง' })
         setDataUser({ isLogin: false, userData: null, takecareData: null })
-    }
+    }, []);
+
+
+    const onGetUserData = useCallback(async (auToken: string) => {
+        try {
+            const responseUser = await axios.get(`${process.env.WEB_DOMAIN}/api/user/getUser/${auToken}`);
+            if (!responseUser.data?.data) {
+                alertModal();
+                return;
+            }
+            const userData = responseUser.data.data;
+
+            const encodedUsersId = encrypt(userData.users_id.toString());
+            const responseTakecareperson = await axios.get(`${process.env.WEB_DOMAIN}/api/user/getUserTakecareperson/${encodedUsersId}`);
+            const takecareData = responseTakecareperson.data?.data;
+
+            if (!takecareData) {
+                alertModal();
+                return;
+            }
+
+            setDataUser({ isLogin: false, userData, takecareData });
+
+            const idSafezone = router.query.idsafezone;
+            if (idSafezone && Number(idSafezone) > 0) {
+                // กรณีแก้ไข: ดึงข้อมูล Safezone เดิม
+                onGetSafezone(idSafezone as string, takecareData, userData);
+            } else {
+                // กรณีสร้างใหม่: ดึงตำแหน่งปัจจุบัน
+                if (navigator.geolocation) {
+                    navigator.geolocation.getCurrentPosition((position) => {
+                        setLocation({
+                            latitude: position.coords.latitude,
+                            longitude: position.coords.longitude,
+                        });
+                    }, (err) => {
+                        console.error("Geolocation error:", err);
+                        setAlert({ show: true, message: 'ไม่สามารถดึงตำแหน่งปัจจุบันได้' });
+                    });
+                } else {
+                    setAlert({ show: true, message: 'เบราว์เซอร์ไม่รองรับการระบุตำแหน่ง' });
+                }
+            }
+        } catch (error) {
+            console.log("🚀 ~ file: registration.tsx:66 ~ onGetUserData ~ error:", error)
+            setDataUser({ isLogin: false, userData: null, takecareData: null })
+            setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูลของท่านได้ กรุณาลองใหม่อีกครั้ง' })
+        }
+    }, [alertModal, onGetSafezone, router.query.idsafezone]);
+
+    useEffect(() => {
+        const auToken = router.query.auToken
+        if (auToken) {
+            onGetUserData(auToken as string)
+        }
+    }, [router.query.auToken, onGetUserData]);
 
     const { isLoaded } = useLoadScript({
         googleMapsApiKey: process.env.GoogleMapsApiKey as string
@@ -140,28 +149,28 @@ const Setting = () => {
     };
     const handleSave = async () => {
         try {
-            
+
             setLoading(true)
-            if(dataUser.takecareData && dataUser.userData){
-                    let data:SafezoneStage = {
-                        takecare_id    : dataUser.takecareData.takecare_id,
-                        users_id       : dataUser.userData.users_id,
-                        safez_latitude : location.latitude.toString(),
-                        safez_longitude: location.longitude.toString(),
-                        safez_radiuslv1: range1,
-                        safez_radiuslv2: range2,
-                    }
-                    if(idSafezoneStage > 0){
-                        data['safezone_id'] = idSafezoneStage
-                    }
-                   const res = await axios.post(`${process.env.WEB_DOMAIN}/api/setting/saveSafezone`, data);
-                   if(res.data?.id){
-                       router.push(`/setting?auToken=${router.query.auToken}&idsafezone=${res.data.id}`)
-                   }
-                    setAlert({ show: true, message: 'บันทึกข้อมูลสำเร็จ' })
+            if (dataUser.takecareData && dataUser.userData) {
+                let data: SafezoneStage = {
+                    takecare_id: dataUser.takecareData.takecare_id,
+                    users_id: dataUser.userData.users_id,
+                    safez_latitude: location.latitude.toString(),
+                    safez_longitude: location.longitude.toString(),
+                    safez_radiuslv1: range1,
+                    safez_radiuslv2: range2,
+                }
+                if (idSafezoneStage > 0) {
+                    data['safezone_id'] = idSafezoneStage
+                }
+                const res = await axios.post(`${process.env.WEB_DOMAIN}/api/setting/saveSafezone`, data);
+                if (res.data?.id) {
+                    router.push(`/setting?auToken=${router.query.auToken}&idsafezone=${res.data.id}`)
+                }
+                setAlert({ show: true, message: 'บันทึกข้อมูลสำเร็จ' })
             }
             setLoading(false)
-          
+
         } catch (error) {
             setAlert({ show: true, message: 'ไม่สามารถบันทึกข้อมูลได้' })
         }
@@ -254,14 +263,14 @@ const Setting = () => {
                             </Row>
                             {
                                 dataUser.takecareData && dataUser.userData ? (
-                                        <Row>
-                                            <Col sm={12}>
-                                                <ButtonState className={styles.button} text={'บันทึก'} icon="fas fa-save" isLoading={isLoading} onClick={() => handleSave()} />
-                                            </Col>
-                                        </Row>
+                                    <Row>
+                                        <Col sm={12}>
+                                            <ButtonState className={styles.button} text={'บันทึก'} icon="fas fa-save" isLoading={isLoading} onClick={() => handleSave()} />
+                                        </Col>
+                                    </Row>
                                 ) : null
                             }
-                            
+
                         </Container>
                         <ModalAlert show={alert.show} message={alert.message} handleClose={() => setAlert({ show: false, message: '' })} />
                     </>
