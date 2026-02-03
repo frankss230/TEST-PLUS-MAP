@@ -34,6 +34,7 @@ const Location = () => {
     const [userInteracted, setUserInteracted] = useState(false);
 
     const [infoWindowData, setInfoWindowData] = useState({ id: 0, address: '', show: false });
+    const [fallEvent, setFallEvent] = useState<{ show: boolean; lat: number; lng: number } | null>(null);
     const [alert, setAlert] = useState({ show: false, message: '' });
     const [isLoading, setLoading] = useState(true);
     const [dataUser, setDataUser] = useState<DataUserState>({ isLogin: false, userData: null, takecareData: null })
@@ -95,6 +96,19 @@ const Location = () => {
                     lat: Number(safezoneData.safez_latitude),
                     lng: Number(safezoneData.safez_longitude),
                 });
+            }
+
+            // --- NEW: Check for fall event ---
+            // This assumes the API response includes a boolean `is_fall` field.
+            if (resLocation.data?.data?.is_fall) {
+                setFallEvent({
+                    show: true,
+                    lat: Number(resLocation.data.data.locat_latitude),
+                    lng: Number(resLocation.data.data.locat_longitude),
+                });
+                // Stop polling to prevent the modal from re-appearing.
+                if (pollingRef.current) clearInterval(pollingRef.current);
+                if (caretakerPollingRef.current) clearInterval(caretakerPollingRef.current);
             }
             if (!silent) setLoading(false)
         } catch (error) {
@@ -276,6 +290,30 @@ const Location = () => {
         fillOpacity: 0.2,
     };
 
+    const handleRequestHelp = async () => {
+        if (!dataUser.userData || !dataUser.takecareData || !fallEvent) {
+            setAlert({ show: true, message: 'ไม่สามารถส่งคำขอได้: ข้อมูลไม่ครบถ้วน' });
+            return;
+        }
+        try {
+            // This calls a new backend API endpoint responsible for sending the LINE notification.
+            await axios.post(`${process.env.WEB_DOMAIN}/api/line/notifyFall`, {
+                users_id: dataUser.userData.users_id,
+                takecare_id: dataUser.takecareData.takecare_id,
+                lat: fallEvent.lat,
+                lng: fallEvent.lng,
+            });
+            setAlert({ show: true, message: 'ส่งคำขอความช่วยเหลือสำเร็จ' });
+        } catch (error) {
+            console.error("Failed to send help request", error);
+            setAlert({ show: true, message: 'เกิดข้อผิดพลาดในการส่งคำขอความช่วยเหลือ' });
+        } finally {
+            // Close the fall event modal after action.
+            setFallEvent(null);
+            // Polling is currently stopped. The user might need to reload to restart it.
+        }
+    };
+
     if ((origin.lat === 0 && origin.lng === 0) || (destination.lat === 0 && destination.lng === 0)) {
         return (
             <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
@@ -286,6 +324,31 @@ const Location = () => {
 
     return (
         <>
+            {fallEvent?.show && (
+                <div className={styles.fallAlertOverlay}>
+                    <div className={styles.fallAlertModal}>
+                        <div className={styles.fallAlertIcon}>
+                            <i className="fas fa-exclamation-triangle fa-3x"></i>
+                        </div>
+                        <h2>ตรวจพบเหตุฉุกเฉิน!</h2>
+                        <p>ระบบตรวจพบการล้มของผู้มีภาวะพึ่งพิง</p>
+                        <div className={styles.fallAlertActions}>
+                            <button
+                                className="btn btn-danger btn-lg"
+                                onClick={handleRequestHelp}
+                            >
+                                <i className="fab fa-line"></i> แจ้งขอความช่วยเหลือ
+                            </button>
+                            <button
+                                className="btn btn-secondary mt-2"
+                                onClick={() => setFallEvent(null)}
+                            >
+                                ปิด
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             {
                 !isLoaded ? (
                     <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
