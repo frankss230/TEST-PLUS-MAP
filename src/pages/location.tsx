@@ -121,8 +121,6 @@ const Location = () => {
             if (resLocation.data?.data?.is_fall) {
                 const fallLat = Number(resLocation.data.data.locat_latitude);
                 const fallLng = Number(resLocation.data.data.locat_longitude);
-                // Send notification automatically
-                sendFallNotification(fallLat, fallLng);
                 // Show alert modal
                 setFallEvent({
                     show: true,
@@ -139,7 +137,7 @@ const Location = () => {
             setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูล Safezone ของท่านได้ กรุณาลองใหม่อีกครั้ง' })
             setLoading(false)
         }
-    }, [router.query.idlocation, sendFallNotification]);
+    }, [router.query.idlocation]);
 
     // Polling ดึงตำแหน่งล่าสุดทุก 5 วินาที
     const startPollingLocation = useCallback((safezoneData: any, takecareData: any, userData: any) => {
@@ -313,6 +311,14 @@ const Location = () => {
         fillOpacity: 0.2,
     };
 
+    const handleRequestHelp = async () => {
+        if (!fallEvent) return;
+
+        await sendFallNotification(fallEvent.lat, fallEvent.lng);
+        setAlert({ show: true, message: 'ส่งแจ้งเตือนฉุกเฉินไปยัง LINE สำเร็จ' });
+        setFallEvent(null); // ปิดหน้าต่างหลังจากส่ง
+    };
+
     if ((origin.lat === 0 && origin.lng === 0) || (destination.lat === 0 && destination.lng === 0)) {
         return (
             <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
@@ -330,13 +336,19 @@ const Location = () => {
                             <i className="fas fa-exclamation-triangle fa-3x"></i>
                         </div>
                         <h2>ตรวจพบเหตุฉุกเฉิน!</h2>
-                        <p>ระบบตรวจพบการล้มของผู้มีภาวะพึ่งพิง<br /><b>ได้ทำการแจ้งเตือนไปยัง LINE แล้ว</b></p>
+                        <p>ระบบตรวจพบการล้มของผู้มีภาวะพึ่งพิง<br />คุณต้องการส่งแจ้งเตือนไปยัง LINE หรือไม่?</p>
                         <div className={styles.fallAlertActions}>
                             <button
-                                className="btn btn-primary btn-lg"
+                                className="btn btn-danger btn-lg"
+                                onClick={handleRequestHelp}
+                            >
+                                <i className="fab fa-line"></i> ใช่, ส่งแจ้งเตือน
+                            </button>
+                            <button
+                                className="btn btn-secondary mt-2"
                                 onClick={() => setFallEvent(null)}
                             >
-                                รับทราบ
+                                ไม่, ปิดไปก่อน
                             </button>
                         </div>
                     </div>
