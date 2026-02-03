@@ -35,6 +35,7 @@ const Location = () => {
 
     const [infoWindowData, setInfoWindowData] = useState({ id: 0, address: '', show: false });
     const [fallEvent, setFallEvent] = useState<{ show: boolean; lat: number; lng: number } | null>(null);
+    const [isSendingHelp, setIsSendingHelp] = useState(false);
     const [alert, setAlert] = useState({ show: false, message: '' });
     const [isLoading, setLoading] = useState(true);
     const [dataUser, setDataUser] = useState<DataUserState>({ isLogin: false, userData: null, takecareData: null })
@@ -82,21 +83,32 @@ const Location = () => {
         }
     }, []);
 
-    const sendFallNotification = useCallback(async (lat: number, lng: number) => {
+    const sendFallNotification = useCallback(async (lat: number, lng: number): Promise<boolean> => {
         if (!dataUser.userData || !dataUser.takecareData) {
             console.error('Cannot send fall notification: user data is missing.');
-            return;
+            setAlert({ show: true, message: 'ข้อมูลผู้ใช้ไม่ครบถ้วน ไม่สามารถส่งแจ้งเตือนได้' });
+            return false;
         }
         try {
-            await axios.post(`${process.env.WEB_DOMAIN}/api/line/notifyFall`, {
+            const response = await axios.post(`${process.env.WEB_DOMAIN}/api/line/notifyFall`, {
                 users_id: dataUser.userData.users_id,
                 takecare_id: dataUser.takecareData.takecare_id,
                 lat: lat,
                 lng: lng,
             });
+            // ตรวจสอบ response จาก backend ว่าสำเร็จจริงหรือไม่
+            if (response.data && response.data.success) {
+                return true;
+            } else {
+                // กรณี API สำเร็จ แต่ backend ส่งข้อความไม่สำเร็จ
+                const errorMessage = response.data?.message || 'เซิร์ฟเวอร์ไม่สามารถส่งข้อความได้';
+                setAlert({ show: true, message: `ส่งแจ้งเตือนล้มเหลว: ${errorMessage}` });
+                return false;
+            }
         } catch (error) {
             console.error("Failed to send fall notification", error);
             setAlert({ show: true, message: 'เกิดข้อผิดพลาดในการส่งการแจ้งเตือนฉุกเฉิน' });
+            return false;
         }
     }, [dataUser.userData, dataUser.takecareData]);
 
@@ -312,11 +324,16 @@ const Location = () => {
     };
 
     const handleRequestHelp = async () => {
-        if (!fallEvent) return;
+        if (!fallEvent || isSendingHelp) return;
 
-        await sendFallNotification(fallEvent.lat, fallEvent.lng);
-        setAlert({ show: true, message: 'ส่งแจ้งเตือนฉุกเฉินไปยัง LINE สำเร็จ' });
-        setFallEvent(null); // ปิดหน้าต่างหลังจากส่ง
+        setIsSendingHelp(true);
+        const success = await sendFallNotification(fallEvent.lat, fallEvent.lng);
+        setIsSendingHelp(false);
+
+        if (success) {
+            setAlert({ show: true, message: 'ส่งแจ้งเตือนฉุกเฉินไปยัง LINE สำเร็จ' });
+            setFallEvent(null); // Close modal only on success
+        }
     };
 
     if ((origin.lat === 0 && origin.lng === 0) || (destination.lat === 0 && destination.lng === 0)) {
@@ -341,8 +358,18 @@ const Location = () => {
                             <button
                                 className="btn btn-danger btn-lg"
                                 onClick={handleRequestHelp}
+                                disabled={isSendingHelp}
                             >
-                                <i className="fab fa-line"></i> ใช่, ส่งแจ้งเตือน
+                                {isSendingHelp ? (
+                                    <>
+                                        <Spinner as="span" animation="border" size="sm" role="status" aria-hidden="true" />
+                                        {' '}กำลังส่ง...
+                                    </>
+                                ) : (
+                                    <>
+                                        <i className="fab fa-line"></i> ใช่, ส่งแจ้งเตือน
+                                    </>
+                                )}
                             </button>
                             <button
                                 className="btn btn-secondary mt-2"
