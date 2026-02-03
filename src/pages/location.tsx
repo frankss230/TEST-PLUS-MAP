@@ -82,6 +82,24 @@ const Location = () => {
         }
     }, []);
 
+    const sendFallNotification = useCallback(async (lat: number, lng: number) => {
+        if (!dataUser.userData || !dataUser.takecareData) {
+            console.error('Cannot send fall notification: user data is missing.');
+            return;
+        }
+        try {
+            await axios.post(`${process.env.WEB_DOMAIN}/api/line/notifyFall`, {
+                users_id: dataUser.userData.users_id,
+                takecare_id: dataUser.takecareData.takecare_id,
+                lat: lat,
+                lng: lng,
+            });
+        } catch (error) {
+            console.error("Failed to send fall notification", error);
+            setAlert({ show: true, message: 'เกิดข้อผิดพลาดในการส่งการแจ้งเตือนฉุกเฉิน' });
+        }
+    }, [dataUser.userData, dataUser.takecareData]);
+
     const onGetLocation = useCallback(async (safezoneData: any, takecareData: any, userData: any, silent = false) => {
         try {
             const resLocation = await axios.get(`${process.env.WEB_DOMAIN}/api/location/getLocation?takecare_id=${takecareData.takecare_id}&users_id=${userData.users_id}&safezone_id=${safezoneData.safezone_id}&location_id=${router.query.idlocation}`);
@@ -101,10 +119,15 @@ const Location = () => {
             // --- NEW: Check for fall event ---
             // This assumes the API response includes a boolean `is_fall` field.
             if (resLocation.data?.data?.is_fall) {
+                const fallLat = Number(resLocation.data.data.locat_latitude);
+                const fallLng = Number(resLocation.data.data.locat_longitude);
+                // Send notification automatically
+                sendFallNotification(fallLat, fallLng);
+                // Show alert modal
                 setFallEvent({
                     show: true,
-                    lat: Number(resLocation.data.data.locat_latitude),
-                    lng: Number(resLocation.data.data.locat_longitude),
+                    lat: fallLat,
+                    lng: fallLng,
                 });
                 // Stop polling to prevent the modal from re-appearing.
                 if (pollingRef.current) clearInterval(pollingRef.current);
@@ -116,7 +139,7 @@ const Location = () => {
             setAlert({ show: true, message: 'ระบบไม่สามารถดึงข้อมูล Safezone ของท่านได้ กรุณาลองใหม่อีกครั้ง' })
             setLoading(false)
         }
-    }, [router.query.idlocation]);
+    }, [router.query.idlocation, sendFallNotification]);
 
     // Polling ดึงตำแหน่งล่าสุดทุก 5 วินาที
     const startPollingLocation = useCallback((safezoneData: any, takecareData: any, userData: any) => {
@@ -290,30 +313,6 @@ const Location = () => {
         fillOpacity: 0.2,
     };
 
-    const handleRequestHelp = async () => {
-        if (!dataUser.userData || !dataUser.takecareData || !fallEvent) {
-            setAlert({ show: true, message: 'ไม่สามารถส่งคำขอได้: ข้อมูลไม่ครบถ้วน' });
-            return;
-        }
-        try {
-            // This calls a new backend API endpoint responsible for sending the LINE notification.
-            await axios.post(`${process.env.WEB_DOMAIN}/api/line/notifyFall`, {
-                users_id: dataUser.userData.users_id,
-                takecare_id: dataUser.takecareData.takecare_id,
-                lat: fallEvent.lat,
-                lng: fallEvent.lng,
-            });
-            setAlert({ show: true, message: 'ส่งคำขอความช่วยเหลือสำเร็จ' });
-        } catch (error) {
-            console.error("Failed to send help request", error);
-            setAlert({ show: true, message: 'เกิดข้อผิดพลาดในการส่งคำขอความช่วยเหลือ' });
-        } finally {
-            // Close the fall event modal after action.
-            setFallEvent(null);
-            // Polling is currently stopped. The user might need to reload to restart it.
-        }
-    };
-
     if ((origin.lat === 0 && origin.lng === 0) || (destination.lat === 0 && destination.lng === 0)) {
         return (
             <div className="d-flex justify-content-center align-items-center" style={{ height: '100vh' }}>
@@ -331,19 +330,13 @@ const Location = () => {
                             <i className="fas fa-exclamation-triangle fa-3x"></i>
                         </div>
                         <h2>ตรวจพบเหตุฉุกเฉิน!</h2>
-                        <p>ระบบตรวจพบการล้มของผู้มีภาวะพึ่งพิง</p>
+                        <p>ระบบตรวจพบการล้มของผู้มีภาวะพึ่งพิง<br /><b>ได้ทำการแจ้งเตือนไปยัง LINE แล้ว</b></p>
                         <div className={styles.fallAlertActions}>
                             <button
-                                className="btn btn-danger btn-lg"
-                                onClick={handleRequestHelp}
-                            >
-                                <i className="fab fa-line"></i> แจ้งขอความช่วยเหลือ
-                            </button>
-                            <button
-                                className="btn btn-secondary mt-2"
+                                className="btn btn-primary btn-lg"
                                 onClick={() => setFallEvent(null)}
                             >
-                                ปิด
+                                รับทราบ
                             </button>
                         </div>
                     </div>
